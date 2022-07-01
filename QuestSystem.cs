@@ -14,11 +14,10 @@ struct QuestSub
 {
     public int id;
     public string QuestScript;
-    public List<int> provisoID;
+    public List<string> provisoID;
 
     public int checkCount;//퀘스트 체크갯수
     public int uiIndex; // ui 순서
-
 }
 
 struct QuestTitle
@@ -27,14 +26,13 @@ struct QuestTitle
     public bool DefaultSate;
     public string questUIText;
     public int MonologueNextID;
-    public List<int> GetOffStateID;
-    public List<int> GetOnStateID;
+    public List<string> GetOffStateID;
+    public List<string> GetOnStateID;
     public string NextSceneName;
 
     public int uiIndex;
 
     public List<QuestSub> quest;
-
 }
 
 public class QuestSystem : MonoBehaviour {
@@ -44,427 +42,963 @@ public class QuestSystem : MonoBehaviour {
 
     TextAsset QTText;
 
-    List<QuestTitle> questList;
-    List<GameObject> uiList;
+    List<QuestTitle> defaultList;
+    List<GameObject> default_uiList;
 
-    RectTransform parent;
+    List<QuestTitle> observeList;
+    List<GameObject> observe_uiList;
+
+    RectTransform parent_default;
+    RectTransform parent_observe;
+
     public GameObject prefab_title;
     public GameObject prefab_script;
 
     bool _isEndQuest = false;
     public bool IsEndQuest {
         get { return _isEndQuest; }
-        set { _isEndQuest = false;  }
+        set { _isEndQuest = false; }
     }
 
     string curScene;
 
-	void Start () {
-        questList = new List<QuestTitle>();
-        uiList = new List<GameObject>();
+    [SerializeField]
+    AudioClip clip_end;
+    AudioSource _audio;
+
+    void Awake() {
+        defaultList = new List<QuestTitle>();
+        default_uiList = new List<GameObject>();
+
+        observeList = new List<QuestTitle>();
+        observe_uiList = new List<GameObject>();
 
         QTText = (TextAsset)Resources.Load("Xml/QT");
 
-        parent = transform.GetChild(4).GetComponent<RectTransform>();
+        _audio = GameManager.Instance.Audio;
+
+        parent_default = transform.GetChild(1).GetChild(0). GetComponent<RectTransform>();
+        parent_observe = transform.GetChild(1).GetChild(1).GetComponent<RectTransform>();
     }
 
-    public void AddQuest(int Questid)
+    public void NewGame()
     {
-       int index = -1;
-        for (int i=0; i< questList.Count; i++)
+        if (defaultList != null)
         {
-            if (questList[i].id == Questid)
-            {               
-                QuestTitle node = questList[i];
-                node.DefaultSate = true;
-                node.uiIndex = uiList.Count;
-                for(int j =0; j<node.quest.Count; j++)
-                {
-                    QuestSub qt = node.quest[j];
-                    qt.uiIndex = j;
-                    node.quest[j] = qt;
-                }
-                questList[i] = node;
-                index = i;
+            defaultList.Clear();
+            foreach (GameObject ui in default_uiList)
+            {
+                ui.transform.SetParent(null);
+                Destroy(ui);
+            }
+            default_uiList.Clear();
+
+            observeList.Clear();
+            foreach (GameObject ui in observe_uiList)
+            {
+                ui.transform.SetParent(null);
+                Destroy(ui);
+            }
+            observe_uiList.Clear();
+        }
+    }
+
+    public void SetObserve(bool chk)
+    {
+        if(chk)
+        {
+            parent_default.gameObject.SetActive(false);
+            parent_observe.gameObject.SetActive(true);
+        }
+        else
+        {
+            parent_default.gameObject.SetActive(true);
+            parent_observe.gameObject.SetActive(false);
+        }
+    }
+
+    public void AddDefaultQuest(string Questid)
+    {
+#if UNITY_EDITOR
+        if (Questid == null)
+            Debug.Log(name + ": Quest Error");
+#endif
+
+        string str = Questid.Replace("QL_", "");
+        int qID = int.Parse(str);
+
+        bool _have = false;
+        foreach (QuestTitle t in defaultList)
+        {
+            if (t.id == qID)
+            {
+                _have = true;
                 break;
             }
         }
 
-        if(index != -1) CreateUI(index);
+
+        if (!_have)
+        {
+            QLDoc.Load(Application.dataPath + "/Play_QL.xml");
+
+            curScene = GameManager.Instance.CurScene.ToString();
+            XmlNode QLNode = QLDoc.SelectSingleNode("QL/" + curScene + "/Quest[@ID='" + Questid + "']");
+
+            Debug.Log(curScene);
+            //퀘스트가 현재 씬의 것이 아닌 경우 init에서 가능하도록 on
+            if (QLNode == null)
+            {
+                FixXml(qID, "on");
+            }
+            else
+            {
+                string state = QLNode.Attributes["DefaultState"].Value;
+                if (state == "off")
+                {
+                    QuestTitle title = new QuestTitle();
+
+                    title.id = qID;
+                    title.DefaultSate = true;
+                    title.uiIndex = default_uiList.Count;
+
+                    string uiText = QLNode.SelectSingleNode("QuestUIText").InnerText;
+                    title.questUIText = uiText;
+
+                    XmlNode option = QLNode.SelectSingleNode("Option");
+
+                    int monologueID = 0;
+                    if (QLNode.SelectSingleNode("MonologueID") != null)
+                    {
+                        string str_mono = QLNode.SelectSingleNode("MonologueID").InnerText;
+                        monologueID = int.Parse(str_mono);
+                    }
+                    title.MonologueNextID = monologueID;
+
+                    title.GetOffStateID = new List<string>();
+                    if (option.Attributes["GetOffStateID"] != null)
+                    {
+                        string str_off = option.Attributes["GetOffStateID"].Value;
+                        string[] IDs = str_off.Split('/');
+
+                        foreach (string offID in IDs)
+                            title.GetOffStateID.Add(offID);
+                    }
+
+                    title.GetOnStateID = new List<string>();
+                    if (option.Attributes["GetOnStateID"] != null)
+                    {
+                        string str_on = option.Attributes["GetOnStateID"].Value;
+                        string[] IDs = str_on.Split('/');
+
+                        foreach (string onID in IDs)
+                            title.GetOnStateID.Add(onID);
+                    }
+
+                    string nextScene = null;
+                    if (QLNode.SelectSingleNode("NextSceneName") != null)
+                    {
+                        nextScene = QLNode.SelectSingleNode("NextSceneName").InnerText;
+                    }
+                    title.NextSceneName = nextScene;
+
+                    // 퀘스트 타이틀 그룹의 퀘스트테이블 리스트 제작
+                    List<QuestSub> subList = new List<QuestSub>();
+
+                    QTDoc = new XmlDocument();
+                    QTDoc.LoadXml(QTText.text);
+                    XmlNodeList nodelist = QTDoc.SelectNodes("QT/" + curScene + "/Title[@QuestGroupID='" + Questid + "']");
+
+                    int uiIndex = 1;
+                    foreach (XmlNode node in nodelist)
+                    {
+                        QuestSub sub = new QuestSub();
+
+                        string str_qID = node.SelectSingleNode("Sub").Attributes["ID"].Value;
+                        string reID = str_qID.Replace("Q_", "");
+                        sub.id = int.Parse(reID);
+
+                        string script = node.SelectSingleNode("Sub").Attributes["QuestScript"].Value;
+                        sub.QuestScript = script;
+
+                        sub.provisoID = new List<string>();
+
+                        if (node.SelectSingleNode("Sub").Attributes["GetProvisoID"] != null)
+                        {
+                            string str_proviso = node.SelectSingleNode("Sub").Attributes["GetProvisoID"].Value;
+                            string[] IDs = str_proviso.Split('/');
+
+                            foreach (string inID in IDs)
+                                sub.provisoID.Add(inID);
+                        }
+
+                        sub.checkCount = sub.provisoID.Count;
+
+                        sub.uiIndex = uiIndex;
+                        uiIndex++;
+
+                        subList.Add(sub);
+                    }
+                    title.quest = subList;
+                    defaultList.Add(title);
+
+                    FixXml(qID, "ing");
+                    CreateDefaultUI(defaultList.Count - 1);
+                }
+            }
+
+        }
+    }
+    public void AddObserveQuest(string Questid)
+    {
+#if UNITY_EDITOR
+        if (Questid == null)
+            Debug.Log(name + ": Quest Error");
+#endif
+
+        string str = Questid.Replace("QL_", "");
+        int qID = int.Parse(str);
+
+        bool _have = false;
+        foreach (QuestTitle t in observeList)
+        {
+            if (t.id == qID)
+            {
+                _have = true;
+                break;
+            }
+        }
+
+
+        if (!_have)
+        {
+            QLDoc.Load(Application.dataPath + "/Play_QL.xml");
+
+            curScene = GameManager.Instance.CurScene.ToString();
+            XmlNode QLNode = QLDoc.SelectSingleNode("QL/" + curScene + "/Quest[@ID='" + Questid + "']");
+
+            Debug.Log(curScene);
+            //퀘스트가 현재 씬의 것이 아닌 경우 init에서 가능하도록 on
+            if (QLNode == null)
+            {
+                FixXml(qID, "on");
+            }
+            else
+            {
+                string state = QLNode.Attributes["DefaultState"].Value;
+                if (state == "off")
+                {
+                    QuestTitle title = new QuestTitle();
+
+                    title.id = qID;
+                    title.DefaultSate = true;
+                    title.uiIndex = observe_uiList.Count;
+
+                    string uiText = QLNode.SelectSingleNode("QuestUIText").InnerText;
+                    title.questUIText = uiText;
+
+                    XmlNode option = QLNode.SelectSingleNode("Option");
+
+                    int monologueID = 0;
+                    if (QLNode.SelectSingleNode("MonologueID") != null)
+                    {
+                        string str_mono = QLNode.SelectSingleNode("MonologueID").InnerText;
+                        monologueID = int.Parse(str_mono);
+                    }
+                    title.MonologueNextID = monologueID;
+
+                    title.GetOffStateID = new List<string>();
+                    if (option.Attributes["GetOffStateID"] != null)
+                    {
+                        string str_off = option.Attributes["GetOffStateID"].Value;
+                        string[] IDs = str_off.Split('/');
+
+                        foreach (string offID in IDs)
+                            title.GetOffStateID.Add(offID);
+                    }
+
+                    title.GetOnStateID = new List<string>();
+                    if (option.Attributes["GetOnStateID"] != null)
+                    {
+                        string str_on = option.Attributes["GetOnStateID"].Value;
+                        string[] IDs = str_on.Split('/');
+
+                        foreach (string onID in IDs)
+                            title.GetOnStateID.Add(onID);
+                    }
+
+                    string nextScene = null;
+                    if (QLNode.SelectSingleNode("NextSceneName") != null)
+                    {
+                        nextScene = QLNode.SelectSingleNode("NextSceneName").InnerText;
+                    }
+                    title.NextSceneName = nextScene;
+
+                    // 퀘스트 타이틀 그룹의 퀘스트테이블 리스트 제작
+                    List<QuestSub> subList = new List<QuestSub>();
+
+                    QTDoc = new XmlDocument();
+                    QTDoc.LoadXml(QTText.text);
+                    XmlNodeList nodelist = QTDoc.SelectNodes("QT/" + curScene + "/Title[@QuestGroupID='" + Questid + "']");
+
+                    int uiIndex = 1;
+                    foreach (XmlNode node in nodelist)
+                    {
+                        QuestSub sub = new QuestSub();
+
+                        string str_qID = node.SelectSingleNode("Sub").Attributes["ID"].Value;
+                        string reID = str_qID.Replace("Q_", "");
+                        sub.id = int.Parse(reID);
+
+                        string script = node.SelectSingleNode("Sub").Attributes["QuestScript"].Value;
+                        sub.QuestScript = script;
+
+                        sub.provisoID = new List<string>();
+
+                        if (node.SelectSingleNode("Sub").Attributes["GetProvisoID"] != null)
+                        {
+                            string str_proviso = node.SelectSingleNode("Sub").Attributes["GetProvisoID"].Value;
+                            string[] IDs = str_proviso.Split('/');
+
+                            foreach (string inID in IDs)
+                                sub.provisoID.Add(inID);
+                        }
+
+                        sub.checkCount = sub.provisoID.Count;
+
+                        sub.uiIndex = uiIndex;
+                        uiIndex++;
+
+                        subList.Add(sub);
+                    }
+                    title.quest = subList;
+                    observeList.Add(title);
+
+                    FixXml(qID, "ing");
+                    CreateObserveUI(observeList.Count - 1);
+                }
+            }
+
+        }
     }
 
     public void InitQuest()
     {
-        questList.Clear();
-        foreach (GameObject ui in uiList)
-        {
-            ui.transform.SetParent(null);
-            Destroy(ui);
-        }
-        uiList.Clear();
-
         QLDoc = new XmlDocument();
         QLDoc.Load(Application.dataPath + "/Play_QL.xml");
 
         curScene = GameManager.Instance.CurScene.ToString();
-        XmlNodeList sceneList = QLDoc.SelectSingleNode("QL/" + curScene).ChildNodes;
-
+        XmlNodeList sceneList = QLDoc.SelectNodes("QL/" + curScene+ "/Quest[@DefaultState='on']");
         //현재 씬에 on 되어있는 퀘스트타이틀 들을 리스트에 추가.
         foreach (XmlNode QLNode in sceneList)
         {
-            string state = QLNode.Attributes["DefaultState"].Value;
             //완료된 퀘스트가 아닌경우 
-            if (state != "complete")
+
+            QuestTitle title = new QuestTitle();
+
+            string str_id = QLNode.Attributes.GetNamedItem("ID").Value;
+            string reId = str_id.Replace("QL_", "");    // 아이디의 영문 제거 
+            int id = int.Parse(reId);
+            title.id = id;
+
+            title.DefaultSate = true;
+            title.uiIndex = default_uiList.Count;
+
+            string uiText = QLNode.SelectSingleNode("QuestUIText").InnerText;
+            title.questUIText = uiText;
+
+            XmlNode option = QLNode.SelectSingleNode("Option");
+
+            int monologueID = 0;
+            if (QLNode.SelectSingleNode("MonologueID") != null)
             {
-                QuestTitle title = new QuestTitle();
+                string str_mono = QLNode.SelectSingleNode("MonologueID").InnerText;
+                monologueID = int.Parse(str_mono);
+            }
+            title.MonologueNextID = monologueID;
 
-                string str_id = QLNode.Attributes.GetNamedItem("id").Value;
-                int id = int.Parse(str_id);
-                title.id = id;
+            title.GetOffStateID = new List<string>();
+            if (option.Attributes["GetOffStateID"] != null)
+            {
+                string str_off = option.Attributes["GetOffStateID"].Value;
+                string[] IDs = str_off.Split('/');
 
-                title.DefaultSate = false;
-                if ("on" == state)
+                foreach (string offID in IDs)
+                    title.GetOffStateID.Add(offID);
+            }
+
+            title.GetOnStateID = new List<string>();
+            if (option.Attributes["GetOnStateID"] != null)
+            {
+                string str_on = option.Attributes["GetOnStateID"].Value;
+                string[] IDs = str_on.Split('/');
+
+                foreach (string onID in IDs)
+                    title.GetOnStateID.Add(onID);
+            }
+
+            string nextScene = null;
+            if (QLNode.SelectSingleNode("NextSceneName") != null)
+            {
+                nextScene = QLNode.SelectSingleNode("NextSceneName").InnerText;
+            }
+            title.NextSceneName = nextScene;
+
+            // 퀘스트 타이틀 그룹의 퀘스트테이블 리스트 제작
+            List<QuestSub> subList = new List<QuestSub>();
+
+            QTDoc = new XmlDocument();
+            QTDoc.LoadXml(QTText.text);
+            XmlNodeList nodelist = QTDoc.SelectNodes("QT/" + curScene + "/Title[@QuestGroupID='" + str_id + "']");
+
+            int uiIndex = 1;
+            foreach (XmlNode node in nodelist)
+            {
+                QuestSub sub = new QuestSub();
+
+                string str_qID = node.SelectSingleNode("Sub").Attributes["ID"].Value;
+                string reID = str_qID.Replace("Q_", "");
+                sub.id = int.Parse(reID);
+
+                string script = node.SelectSingleNode("Sub").Attributes["QuestScript"].Value;
+                sub.QuestScript = script;
+
+                sub.provisoID = new List<string>();
+
+                if (node.SelectSingleNode("Sub").Attributes["GetProvisoID"] != null)
                 {
-                    title.DefaultSate = true;
-                    title.uiIndex = uiList.Count;
+                    string str_proviso = node.SelectSingleNode("Sub").Attributes["GetProvisoID"].Value;
+                    string[] IDs = str_proviso.Split('/');
+
+                    foreach (string inID in IDs)
+                        sub.provisoID.Add(inID);
                 }
 
-                string uiText = QLNode.SelectSingleNode("QuestUIText").InnerText;
-                title.questUIText = uiText;
+                sub.checkCount = sub.provisoID.Count;
 
-                XmlNode option = QLNode.SelectSingleNode("Option");
+                sub.uiIndex = uiIndex;
+                uiIndex++;
 
-                int monologueID = 0;
-                if (option.Attributes["MonologueNextID"] != null)
+                subList.Add(sub);
+            }
+            title.quest = subList;
+            defaultList.Add(title);
+
+            FixXml(title.id, "ing");
+            CreateDefaultUI(defaultList.Count - 1);
+
+        }
+    }
+
+    void CheckDefaultTitle()
+    {
+        for (int i = defaultList.Count - 1; i >= 0; i--)
+        {
+            //모든 세부 퀘스트가 끝났을 때 = 메인 퀘스트 완료 
+            if (defaultList[i].quest.Count == 0 && defaultList[i].DefaultSate)
+            {
+                if (defaultList[i].GetOnStateID != null)
                 {
-                    string str_mono = option.Attributes["MonologueNextID"].Value;
-                    monologueID = int.Parse(str_mono);
-                }
-                title.MonologueNextID = monologueID;
-
-                title.GetOffStateID = new List<int>();
-                if (option.Attributes["GetOffStateID"] != null)
-                {
-                    string str_off = option.Attributes["GetOffStateID"].Value;
-                    string[] IDs = str_off.Split('/');
-
-                    foreach (string offID in IDs)
-                        title.GetOffStateID.Add(int.Parse(offID));
-                }
-
-                title.GetOnStateID = new List<int>();
-                if (option.Attributes["GetOnStateID"] != null)
-                {
-                    string str_on = option.Attributes["GetOnStateID"].Value;
-                    string[] IDs = str_on.Split('/');
-
-                    foreach (string onID in IDs)
-                        title.GetOnStateID.Add(int.Parse(onID));
-                }
-
-                string nextScene = null;
-                if (option.Attributes["NextSceneName"] != null)
-                {
-                    nextScene = option.Attributes["NextSceneName"].Value;
-                }
-                title.NextSceneName = nextScene;
-
-                // 퀘스트 타이틀 그룹의 퀘스트테이블 리스트 제작
-                List<QuestSub> subList = new List<QuestSub>();
-
-                QTDoc = new XmlDocument();
-                QTDoc.LoadXml(QTText.text);
-                XmlNodeList nodelist = QTDoc.SelectSingleNode("QT/" + curScene +"/Title[@GroupID='"+id+"']").ChildNodes;
-
-                int uiIndex = 0;
-                foreach (XmlNode node in nodelist)
-                {
-                    QuestSub sub = new QuestSub();
-
-                    string str_qID = node.Attributes["id"].Value;
-                    sub.id = int.Parse(str_qID);
-
-                    string script = node.Attributes["QuestScript"].Value;
-                    sub.QuestScript = script;
-
-                    sub.provisoID = new List<int>();
-
-                    if(node.Attributes["GetProvisoID"]!=null)
+                    // on
+                    foreach (string onID in defaultList[i].GetOnStateID)
                     {
-                        string str_proviso = node.Attributes["GetProvisoID"].Value;
-                        string[] IDs = str_proviso.Split('/');
+                         if (onID.Contains("QL_"))
+                            AddDefaultQuest(onID);
+                        else
+                        {
+                            int _id = int.Parse(onID);
 
-                        foreach (string inID in IDs)
-                            sub.provisoID.Add(int.Parse(inID));
+                            // 오브젝트 조사 
+                            if (_id >= 10000 && _id < 20000)
+                            {
+                                DialoguePanel.Instance.SetObserveState(_id, true);
+                            }
+                            //단서(증거 증언)
+                            if ((_id >= 30000 && _id < 40000) || _id >= 50000)
+                                UIManager.Instance.Note.Add(_id);
+
+                            // 선택지
+                            UIManager.Instance.Select.SetSelectState(_id, true);
+                        }
                     }
-
-                    sub.checkCount = sub.provisoID.Count;
-
-                    if (title.DefaultSate)
-                    {
-                        sub.uiIndex = uiIndex;
-                        uiIndex++;
-                    }
-
-                    subList.Add(sub);
                 }
-                title.quest = subList;
-                questList.Add(title);
 
-                CreateUI(questList.Count - 1);
+                // 독백
+                if (defaultList[i].MonologueNextID > 0)
+                {
+                    UIManager.Instance.Dialoue.SetActive(true);
+                    DialoguePanel.Instance.Monologue(defaultList[i].MonologueNextID);
+                }
+
+                if(defaultList[i].NextSceneName != null)
+                {
+                    if(defaultList[i].NextSceneName.Contains("G"))
+                    {
+                        UIManager.Instance.StartGame = true;
+                        if (!DialoguePanel.Instance.IsTalk && !GameManager.Instance.bPlayEvent)
+                            UIManager.Instance.PlayMiniGame();
+                    }
+                    if (defaultList[i].NextSceneName.Contains("C"))
+                    {
+                        UIManager.Instance.StartCriminal = true;
+                        if (!DialoguePanel.Instance.IsTalk && !GameManager.Instance.bPlayEvent)
+                            UIManager.Instance.PlayCriminal();
+                    }
+                }
+
+                // xml 상태 변경
+                FixXml(defaultList[i].id, "complete");
+
+                int index = defaultList[i].uiIndex;
+
+                // 타 메인 퀘스트 ui  위치 수정 
+                if (index + 1 < default_uiList.Count)
+                {
+                    for (int num = index + 1; num < default_uiList.Count; num++)
+                    {
+                        GameObject ui = default_uiList[num];
+                        RectTransform rect = ui.GetComponent<RectTransform>();
+                        rect.anchoredPosition = default_uiList[num - 1].GetComponent<RectTransform>().anchoredPosition;
+                    }
+                }
+
+                GameObject del = default_uiList[index];
+                default_uiList.RemoveAt(index);
+                // ui 삭제
+                Destroy(del);
+
+                QuestTitle node = defaultList[i];
+                node.DefaultSate = false;
+                node.uiIndex = -1;
+                defaultList[i] = node;
+
+                ChangeDefaultIndex(i,index);
+            }
+        }
+
+    }
+    void ChangeDefaultIndex(int index, int uiIndex)
+    {
+        for(int i = defaultList.Count -1; i>= index; i--)
+        {
+                QuestTitle node = defaultList[i];
+            if (node.uiIndex > uiIndex)
+            {
+                node.uiIndex = defaultList[i].uiIndex - 1; ;
+                defaultList[i] = node;
             }
         }
     }
 
-    // 퀘스트 체크
-    public void CheckQuest(int checkID)
+    void CheckObserveTitle()
     {
-        bool breakRoof = false;
-        //_isEndQuest = false;
-        //qusetList 돌리기
-        for (int i = 0; i < questList.Count; i++)
+        for (int i = observeList.Count - 1; i >= 0; i--)
         {
-            // qusetTable list 돌리기..
-            for (int j = 0; j < questList[i].quest.Count; j++)
+            //모든 세부 퀘스트가 끝났을 때 = 메인 퀘스트 완료 
+            if (observeList[i].quest.Count == 0 && observeList[i].DefaultSate)
             {
-                QuestTable table = questList[i].quest[j];
-                
-                //id 체크
-                if (table.provisoID.Contains(checkID))
+
+                _isEndQuest = true;
+                if (observeList[i].GetOnStateID != null)
                 {
-                    // 찾은 경우 qusetTable 목록에서 지우기
-                    questList[i].quest[j].provisoID.Remove(checkID);
-                    breakRoof = true;
-
-                    int count = questList[i].quest[j].num - questList[i].quest[j].provisoID.Count;
-
-                    int titleIndex = questList[i].uiIndex;
-                    int index = questList[i].quest[j].uiIndex;
-                   
-                    // 퀘스트 숫자 갱신
-                    Text numTxt = uiList[titleIndex].transform.GetChild(index).GetChild(0).GetComponent<Text>();
-                    numTxt.text = count.ToString();
-
-                    Text uiTxt = uiList[titleIndex].transform.GetChild(index).GetComponent<Text>();
-                    if (questList[i].id >= 9500 && uiTxt.text == "???")
-                        uiTxt.text = table.QuestScript;
-
-                    if (table.provisoID.Count <= 0)
+                    // on
+                    foreach (string onID in observeList[i].GetOnStateID)
                     {
-                       questList[i].quest.Remove(table);
-                            // 퀘스트 유아이 글씨 회색처리 하기
-                            numTxt.color = Color.gray;
-                        uiList[titleIndex].transform.GetChild(index).GetChild(1).GetComponent<Text>().color = Color.gray;
-                        uiList[titleIndex].transform.GetChild(index).GetComponent<Text>().color = Color.gray;
-                        
-                    }
+                        if (onID.Contains("QL_"))
+                            AddDefaultQuest(onID);
+                        else
+                        {
+                            int _id = int.Parse(onID);
 
-                    break;
+                            // 오브젝트 조사 
+                            if (_id >= 10000 && _id < 20000)
+                            {
+                                DialoguePanel.Instance.SetObserveState(_id, true);
+                            }
+                            //단서(증거 증언)
+                            if ((_id >= 30000 && _id < 40000) || _id >= 50000)
+                                UIManager.Instance.Note.Add(_id);
+
+                            // 선택지
+                            UIManager.Instance.Select.SetSelectState(_id, true);
+                        }
+                    }
                 }
+
+                // 독백
+                if (observeList[i].MonologueNextID > 0)
+                {
+                    UIManager.Instance.Dialoue.SetActive(true);
+                    DialoguePanel.Instance.Monologue(observeList[i].MonologueNextID);
+                }
+
+                if (observeList[i].NextSceneName != null)
+                {
+                    if (observeList[i].NextSceneName.Contains("G"))
+                    {
+                        UIManager.Instance.StartGame = true;
+                        if (!DialoguePanel.Instance.IsTalk && !GameManager.Instance.bPlayEvent)
+                            UIManager.Instance.PlayMiniGame();
+                    }
+                    if (observeList[i].NextSceneName.Contains("C"))
+                    {
+                        UIManager.Instance.StartCriminal = true;
+                        if (!DialoguePanel.Instance.IsTalk && !GameManager.Instance.bPlayEvent)
+                            UIManager.Instance.PlayCriminal();
+                    }
+                }
+
+                // xml 상태 변경
+                FixXml(observeList[i].id, "complete");
+
+                int index = observeList[i].uiIndex;
+
+                // 타 메인 퀘스트 ui  위치 수정 
+                if (index + 1 < observe_uiList.Count)
+                {
+                    for (int num = index + 1; num < observe_uiList.Count; num++)
+                    {
+                        GameObject ui = observe_uiList[num];
+                        RectTransform rect = ui.GetComponent<RectTransform>();
+                        rect.anchoredPosition = observe_uiList[num - 1].GetComponent<RectTransform>().anchoredPosition;
+                    }
+                }
+
+                GameObject del = observe_uiList[index];
+                observe_uiList.RemoveAt(index);
+                // ui 삭제
+                Destroy(del);
+
+                QuestTitle node = observeList[i];
+                node.DefaultSate = false;
+                node.uiIndex = -1;
+                observeList[i] = node;
+
+                ChangeObserveIndex(i, index);
             }
-            if (questList[i].quest.Count <= 0)
+        }
+    }
+    void ChangeObserveIndex(int index, int uiIndex)
+    {
+        for (int i = observeList.Count - 1; i >= index; i--)
+        {
+            QuestTitle node = observeList[i];
+            if (node.uiIndex > uiIndex)
             {
-                int offStateID = questList[i].GetOffStateID;
-                // 퀘스트로 완료로 인해 Off 시킬것  
-                if (offStateID > 0)
+                node.uiIndex = observeList[i].uiIndex - 1; ;
+                observeList[i] = node;
+            }
+        }
+    }
+    /*
+    // 단서 수집 시 완료되는 퀘스트가 있는 지 확인
+    public void QuestDefaultCheck(string checkID)
+    {
+       
+        bool isEnd = false;
+        foreach (QuestTitle title in defaultList)
+        {
+            if (title.DefaultSate)
+            {
+                foreach (QuestSub sub in title.quest)
                 {
-                    // 오브젝트
-                    if (offStateID >= 1000 && offStateID < 2001)
+                    if (sub.provisoID.Contains(checkID))
                     {
-                 //       UIManager.Instance.Dialouge.OffObj(offStateID);
-                    }
-                    // 선택지
-                    if (offStateID >= 5000 && offStateID < 5001)
-                    {
-              //          UIManager.Instance.Select.OffSelect(offStateID);
-                    }
-                    // 수첩
-                    if (offStateID >= 7000 && offStateID < 8001)
-                    {
-                        //   GameManager.Instance.Note.AddEvidence(offStateID, curScene);
-                    }
+                        //세부 퀘스트 단서 목록에서 지우기
+                        sub.provisoID.Remove(checkID);
 
-                }
-                int onStateID = questList[i].GetOnStateID;
+                        // 세부 퀘스트 UI
+                        GameObject subUI = default_uiList[title.uiIndex].transform.GetChild(sub.uiIndex).gameObject;
 
-                // xml 설정
-                QLDoc = new XmlDocument();
-                QLDoc.Load(Application.dataPath + "/Play_QL.xml");
+                        // 세부퀘스트 수 갱신
+                        int count = sub.checkCount - sub.provisoID.Count;
+                        Text countTxt = subUI.transform.GetChild(0).GetComponent<Text>();
+                        countTxt.text = count.ToString();
 
-                XmlNodeList sceneList = QLDoc.SelectSingleNode("QL/" + curScene).ChildNodes;
-                foreach (XmlNode QLNode in sceneList)
-                {
-                    string str_id = QLNode.Attributes.GetNamedItem("id").InnerText;
-                    int id = int.Parse(str_id);
-                    if (questList[i].id == id)
-                    {
-                        QLNode.SelectSingleNode("DefalutState").InnerText = "complete";
-                        QLDoc.Save(Application.dataPath + "/Play_QL.xml");
+                        // 확대 조사일 경우 세부 퀘스트 내용 수정
+                        Text scriptTxt = subUI.GetComponent<Text>();
+                        if (title.id > 9500 & scriptTxt.text == "???")
+                            scriptTxt.text = sub.QuestScript;
+
+                        // 세부 퀘스트 완료시 ui 변경
+                        if (sub.provisoID.Count <= 0)
+                        {
+                            isEnd = true;
+                            // 세부 퀘스트 삭제
+                            title.quest.Remove(sub);
+                            //회색 처리
+                            scriptTxt.color = Color.gray;
+                            countTxt.color = Color.gray;
+                            subUI.transform.GetChild(1).GetComponent<Text>().color = Color.gray;
+                            subUI.transform.GetChild(2).gameObject.SetActive(true);
+                        }
                         break;
                     }
                 }
-                _isEndQuest = true;
-
-                int titleIndex = questList[i].uiIndex;
-                questList.Remove(questList[i]);
-
-                
-                //// 다른 유아이 위치 재설정
-                //if (titleIndex < uiList.Count - 1)
-                //{
-                //    Debug.Log(this + ":: titleIndex = " + titleIndex);
-                //    //현재 지워질 유아이 보다 위에 있는 경우 
-                //    for (int j = titleIndex + 1; j < uiList.Count; j++)
-                //    {
-                //        Debug.Log(this + ":: j = " + j);
-                //        float height = uiList[j - 1].GetComponent<RectTransform>().anchoredPosition.y;
-                //        //  height += 25;
-                //        height += 90 + (40 * uiList[j].transform.childCount);
-                //    }
-                //}  
-
-                //유아이 삭제
-                GameObject ui = uiList[titleIndex];
-                uiList.RemoveAt(titleIndex);
-                Destroy(ui);
-
-                // 퀘스트로 완료로 인해 On 시킬것  
-                if (onStateID > 0)
+            }
+            if (isEnd) break;
+        }
+        if (isEnd)
+        {
+            isEnd = false;
+            CheckDefaultTitle();
+        }
+    }
+  */
+    public void QuestCheck(string checkID)
+    {
+        bool isEnd = false;
+        foreach (QuestTitle title in defaultList)
+        {
+            if (title.DefaultSate)
+            {
+                foreach (QuestSub sub in title.quest)
                 {
-                    // 오브젝트
-                    if (onStateID >= 1000 && onStateID < 2001)
+                    if (sub.provisoID.Contains(checkID))
                     {
-                   //     UIManager.Instance.Dialouge.OnObj(onStateID);
-                        CheckQuest(onStateID);
-                    }
-                    // 선택지
-                    if (onStateID >= 5000 && onStateID < 6001)
-                    {
-                    //    UIManager.Instance.Select.OnSelect(onStateID);
-                    }
-                    // 수첩
-                    if (onStateID >= 7000 && onStateID < 8001)
-                    {
-     //                   GameManager.Instance.Note.AddEvidence(onStateID);
-                        CheckQuest(onStateID);
+                        //세부 퀘스트 단서 목록에서 지우기
+                        sub.provisoID.Remove(checkID);
 
+                        // 세부 퀘스트 UI
+                        GameObject subUI = default_uiList[title.uiIndex].transform.GetChild(sub.uiIndex).gameObject;
+
+                        // 세부퀘스트 수 갱신
+                        int count = sub.checkCount - sub.provisoID.Count;
+                        Text countTxt = subUI.transform.GetChild(0).GetComponent<Text>();
+                        countTxt.text = count.ToString();
+
+                        // 확대 조사일 경우 세부 퀘스트 내용 수정
+                        Text scriptTxt = subUI.GetComponent<Text>();
+                        if (title.id > 9500 & scriptTxt.text == "???")
+                            scriptTxt.text = sub.QuestScript;
+
+                        // 세부 퀘스트 완료시 ui 변경
+                        if (sub.provisoID.Count <= 0)
+                        {
+                            isEnd = true;
+                            // 세부 퀘스트 삭제
+                            title.quest.Remove(sub);
+                            //회색 처리
+                            scriptTxt.color = Color.gray;
+                            countTxt.color = Color.gray;
+                            subUI.transform.GetChild(1).GetComponent<Text>().color = Color.gray;
+                            subUI.transform.GetChild(2).gameObject.SetActive(true);
+                        }
+                        break;
                     }
                 }
             }
-
-            if (breakRoof)
-            {
-                breakRoof = false;
-                break;
-            }
+            if (isEnd) break;
         }
-
-        //qusetList count가 0인경우 리스트 초기화, 다음씬
-        if (questList.Count <= 0)
+        if (isEnd)
         {
-            questList.Clear();
-            if (GameManager.Instance.CurScene == SceneType.Library)
-            {            // 다음씬
-                GameManager.Instance.SetNextScene(SceneType.DoctorRoom);
-            }
-            else if(GameManager.Instance.CurScene == SceneType.DoctorRoom)
+            _audio.PlayOneShot(clip_end);
+            isEnd = false;
+            CheckDefaultTitle();
+        }
+        else
+        {
+            foreach (QuestTitle title in observeList)
             {
-                if (GameManager.Instance.DrRoomCtrl.bCheckDr)
-                    GameManager.Instance.SetNextScene(SceneType.DoctorRoom_out);
+                if (title.DefaultSate)
+                {
+                    foreach (QuestSub sub in title.quest)
+                    {
+                        if (sub.provisoID.Contains(checkID))
+                        {
+                            //세부 퀘스트 단서 목록에서 지우기
+                            sub.provisoID.Remove(checkID);
+
+                            // 세부 퀘스트 UI
+                            GameObject subUI = observe_uiList[title.uiIndex].transform.GetChild(sub.uiIndex).gameObject;
+
+                            // 세부퀘스트 수 갱신
+                            int count = sub.checkCount - sub.provisoID.Count;
+                            Text countTxt = subUI.transform.GetChild(0).GetComponent<Text>();
+                            countTxt.text = count.ToString();
+
+                            // 확대 조사일 경우 세부 퀘스트 내용 수정
+                            Text scriptTxt = subUI.GetComponent<Text>();
+                            if (title.id > 9500 & scriptTxt.text == "???")
+                                scriptTxt.text = sub.QuestScript;
+
+                            // 세부 퀘스트 완료시 ui 변경
+                            if (sub.provisoID.Count <= 0)
+                            {
+                                isEnd = true;
+                                // 세부 퀘스트 삭제
+                                title.quest.Remove(sub);
+                                //회색 처리
+                                scriptTxt.color = Color.gray;
+                                countTxt.color = Color.gray;
+                                subUI.transform.GetChild(1).GetComponent<Text>().color = Color.gray;
+                                subUI.transform.GetChild(2).gameObject.SetActive(true);
+                            }
+                            break;
+                        }
+                    }
+                }
+                if (isEnd) break;
+            }
+            if (isEnd)
+            {
+                _audio.PlayOneShot(clip_end);
+                isEnd = false;
+                CheckObserveTitle();
             }
         }
     }
-    
-    // 로드시 체크됐던 퀘스트
-    public void CheckedQuset()
+
+    // 데이터 로드 시 진행 중이던 세부 퀘스트확인
+    /*public void CheckedQuest()
     {
-        //qusetList 돌리기
-        for (int i = 0; i < questList.Count; i++)
+        foreach(QuestTitle title in questList)
         {
-            if (questList[i].DefaultSate)
+            // on 상태인 메인 퀘스트의 세부 퀘스트들
+            if(title.DefaultSate)
             {
-                // qusetTable list 돌리기..
-                for (int j = 0; j < questList[i].quest.Count; j++)
+                foreach(QuestSub sub in title.quest)
                 {
-                    QuestTable table = questList[i].quest[j];
-
-                    // 퀘스트 체크 id 목록 돌리기 
-                    for (int index = 0; index < table.provisoID.Count; index++)
+                    foreach (string proviso in sub.provisoID)
                     {
-                        int id = table.provisoID[index];
-                        bool b_check;
+                        bool bcheck = false;
 
-                        if (id >= 7000 && id < 8001) { b_check = false; }
-          //                  b_check = GameManager.Instance.Note.CheckNote(id);
-                        else
-                            b_check = false;
-                           // b_check = UIManager.Instance.Dialouge.CheckDialogue(id);
-
-                        if (b_check)
+                        int num;
+                        if (int.TryParse(proviso, out num))
                         {
-                            // 찾은 경우 qusetTable 목록에서 지우기
-                            questList[i].quest[j].provisoID.Remove(id);
+                            //오브젝트 조사 
+                            //인물,증거
+                            Debug.Log(name + "CheckedQuset : 오브젝트 조사/ 인물,증거");
+                        }
+                        else
+                        {
+                            // 추론
+                            Debug.Log(name + "CheckedQuset :추론");
+                        }
 
-                            int count = questList[i].quest[j].num - table.provisoID.Count;
+                        // 완료된 퀘스트인 경우
+                        if (bcheck)
+                        {
+                            // 단서 목록에서 지우기
+                            sub.provisoID.Remove(proviso);
 
-                            int titleIndex = questList[i].uiIndex;
-                            int uiIndex = questList[i].quest[j].uiIndex;
+                            // ui 갱신 
+                            GameObject subUI = uiList[title.uiIndex].transform.GetChild(sub.uiIndex).gameObject;
 
-                            // 퀘스트 숫자 갱신
-                            Text uitxt = uiList[titleIndex].transform.GetChild(uiIndex).GetChild(0).GetComponent<Text>();
-                            uitxt.text = count.ToString();
+                            int count = sub.checkCount - sub.provisoID.Count;
+                            Text countTxt = subUI.transform.GetChild(0).GetComponent<Text>();
+                            countTxt.text = count.ToString();
 
-                            if (table.provisoID.Count <= 0)
+                            // 확대 조사퀘스트일 경우 세부 퀘스트 내용 수정
+                            Text scriptTxt = subUI.GetComponent<Text>();
+                            if (title.id > 9500 & scriptTxt.text == "???")
+                                scriptTxt.text = sub.QuestScript;
+
+                            // 세부 퀘스트 완료시 ui 변경
+                            if (sub.provisoID.Count <= 0)
                             {
-                                questList[i].quest.Remove(table);
-                                // 퀘스트 유아이 글씨 회색처리 하기
-                                uitxt.color = Color.gray;
-                                uiList[titleIndex].transform.GetChild(uiIndex).GetChild(1).GetComponent<Text>().color = Color.gray;
-                                uiList[titleIndex].transform.GetChild(uiIndex).GetComponent<Text>().color = Color.gray;
-
+                                // 세부 퀘스트 삭제
+                                title.quest.Remove(sub);
+                                //회색 처리
+                                scriptTxt.color = Color.gray;
+                                countTxt.color = Color.gray;
+                                subUI.transform.GetChild(1).GetComponent<Text>().color = Color.gray;
+                                subUI.transform.GetChild(2).gameObject.SetActive(true);
                             }
 
                         }
                     }
                 }
             }
+        }
+    }
+    */
 
+    public bool CheckEndEvent(string id)
+    {
+        if (observeList == null)
+        {
+            return true;
+        }
+        else
+        {
+            foreach (QuestTitle title in observeList)
+            {
+                if ("QL_" + title.id == id)
+                {
+                    if (title.quest.Count == 0)
+                    {
+                        return true;
+                    }
+                }
+            }
+
+            return false;
         }
     }
 
-    void CreateUI(int index)
+    void FixXml(int titleID,string state)
+    {
+        QLDoc = new XmlDocument();
+        QLDoc.Load(Application.dataPath + "/Play_QL.xml");
+
+        curScene = GameManager.Instance.CurScene.ToString();
+        XmlNode node = QLDoc.SelectSingleNode("QL/" + curScene + "/Quest[@ID='QL_"+titleID+"']");
+
+        if(node == null)
+        {
+            XmlNodeList list = QLDoc.SelectSingleNode("QL").ChildNodes;
+            foreach(XmlNode n in list)
+            {
+               node= n.SelectSingleNode("Quest[@ID='QL_" + titleID + "']");
+                if (node != null) break;
+
+            }
+        }
+        node.Attributes["DefaultState"].Value = state;
+
+        QLDoc.Save(Application.dataPath + "/Play_QL.xml");
+    }
+
+    void CreateDefaultUI(int index)
     {
         //현재 on 상태인 퀘스트라면
-        if (questList[index].DefaultSate && questList.Count > uiList.Count)
+        if ( defaultList.Count > default_uiList.Count)
         {
             // 게임 오브젝트 생성
             GameObject newQuest = Instantiate(prefab_title);
 
-            // text 지정 및 부모 지정
-            newQuest.GetComponent<Text>().text = questList[index].questUIText;
-            newQuest.transform.SetParent(parent);
+            // 서브 퀘스트 갯수 , 현재 생성된 퀘스트 ui 갯수 
+            int questCount = defaultList[index].quest.Count;
+            int uiCount = parent_default.childCount;
 
-            int questCount = questList[index].quest.Count;
-            int uiIndex = parent.childCount;
+
+            // text 지정 및 부모 지정
+            newQuest.transform.GetChild(0).GetComponent<Text>().text = defaultList[index].questUIText;
+            newQuest.transform.SetParent(parent_default);
 
             float height = 0.0f;
-            if (uiIndex > 1)
+
+            if (uiCount > 0)
             {
-               height = parent.GetChild(uiIndex - 2).GetComponent<RectTransform>().anchoredPosition.y;
-                height += 15;
+                RectTransform before = parent_default.GetChild(uiCount - 1).GetComponent<RectTransform>();
+                height = (before.childCount-2) * -35;
+                height -= 125 - before.anchoredPosition.y; 
             }
-            height += 30 + (35 * questCount);
 
             RectTransform rect = newQuest.GetComponent<RectTransform>();
             rect.localScale = Vector3.one;
-            rect.anchoredPosition = new Vector3(-400, height, 0.0f);
+            rect.anchoredPosition = new Vector3(0, height, 0.0f);
 
-            if (questList[index].id >= 9500)
-                newQuest.transform.GetChild(0).GetComponent<Text>().text = "???";
+            GameObject sub = newQuest.transform.GetChild(1).gameObject;
+            Text scriptText = sub.GetComponent<Text>();
+
+            if (defaultList[index].id >= 9500)
+                scriptText.text = "???";
             else
-                newQuest.transform.GetChild(0).GetComponent<Text>().text = questList[index].quest[0].QuestScript;
+                scriptText.text = defaultList[index].quest[0].QuestScript;
 
-            newQuest.transform.GetChild(0).GetChild(1).GetComponent<Text>().text = "/" + questList[index].quest[0].provisoID.Count.ToString();
+            sub.transform.GetChild(1).GetComponent<Text>().text = "/" + defaultList[index].quest[0].provisoID.Count.ToString();
 
             if (questCount >= 2)
             {
@@ -474,22 +1008,85 @@ public class QuestSystem : MonoBehaviour {
 
                     newScript.transform.SetParent(newQuest.transform);
 
-                    float y = -35 * (i + 1);
+                    float y =-30 * i;
                     RectTransform scriptRect = newScript.GetComponent<RectTransform>();
-                    scriptRect.anchoredPosition = new Vector3(20, y, 0);
+                    scriptRect.anchoredPosition = new Vector3(43, y, 0);
 
-                    if (questList[index].id >= 9500)
+                    if (defaultList[index].id >= 9500)
                         newScript.GetComponent<Text>().text = "???";
                     else
-                       newScript.GetComponent<Text>().text = questList[index].quest[i].QuestScript;
-                    newScript.transform.GetChild(1).GetComponent<Text>().text = "/" + questList[index].quest[i].provisoID.Count.ToString();
+                       newScript.GetComponent<Text>().text = defaultList[index].quest[i].QuestScript;
+
+                    newScript.transform.GetChild(1).GetComponent<Text>().text = "/" + defaultList[index].quest[i].provisoID.Count.ToString();
                 }
             }
-            //  if(uiList.Count <= index) 
-            uiList.Add(newQuest);
-           // else
-            //    uiList.Insert(index, newQuest);
+            default_uiList.Add(newQuest);
            
+        }
+    }
+
+    void CreateObserveUI(int index)
+    {
+        //현재 on 상태인 퀘스트라면
+        if (observeList.Count > observe_uiList.Count)
+        {
+            // 게임 오브젝트 생성
+            GameObject newQuest = Instantiate(prefab_title);
+
+            // 서브 퀘스트 갯수 , 현재 생성된 퀘스트 ui 갯수 
+            int questCount = observeList[index].quest.Count;
+            int uiCount = parent_observe.childCount;
+
+
+            // text 지정 및 부모 지정
+            newQuest.transform.GetChild(0).GetComponent<Text>().text = observeList[index].questUIText;
+            newQuest.transform.SetParent(parent_observe);
+
+            float height = 0.0f;
+
+            if (uiCount > 0)
+            {
+                RectTransform before = parent_observe.GetChild(uiCount - 1).GetComponent<RectTransform>();
+                height = (before.childCount - 2) * -35;
+                height -= 125 - before.anchoredPosition.y;
+            }
+
+            RectTransform rect = newQuest.GetComponent<RectTransform>();
+            rect.localScale = Vector3.one;
+            rect.anchoredPosition = new Vector3(0, height, 0.0f);
+
+            GameObject sub = newQuest.transform.GetChild(1).gameObject;
+            Text scriptText = sub.GetComponent<Text>();
+
+            if (observeList[index].id >= 9500)
+                scriptText.text = "???";
+            else
+                scriptText.text = observeList[index].quest[0].QuestScript;
+
+            sub.transform.GetChild(1).GetComponent<Text>().text = "/" + observeList[index].quest[0].provisoID.Count.ToString();
+
+            if (questCount >= 2)
+            {
+                for (int i = 1; i < questCount; i++)
+                {
+                    GameObject newScript = Instantiate(prefab_script);
+
+                    newScript.transform.SetParent(newQuest.transform);
+
+                    float y = -30 * i;
+                    RectTransform scriptRect = newScript.GetComponent<RectTransform>();
+                    scriptRect.anchoredPosition = new Vector3(43, y, 0);
+
+                    if (observeList[index].id >= 9500)
+                        newScript.GetComponent<Text>().text = "???";
+                    else
+                        newScript.GetComponent<Text>().text = observeList[index].quest[i].QuestScript;
+
+                    newScript.transform.GetChild(1).GetComponent<Text>().text = "/" + observeList[index].quest[i].provisoID.Count.ToString();
+                }
+            }
+            observe_uiList.Add(newQuest);
+
         }
     }
 
