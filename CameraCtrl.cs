@@ -13,89 +13,158 @@ public enum DialougeType { OBJ,NPC,EXP,DET,SEL,ALO};
 public class CameraCtrl : MonoBehaviour {
 
     Camera _camera;
-    [SerializeField]
-    private Transform _playerCenter;
+    DetailsCamera _details;
+    public DetailsCamera Details { get { return _details; } }
 
-    public GameObject ui_f;
+    [SerializeField]
+    private Transform playerTrans;
+
+    GameObject ui_f;
     Text txt_name;
 
-    float fildDistance = 1.5f;
-
     int interactionLayer = (1 << 30);
+    bool objChk = false;
+    string objTag;
+
+    float interactionDist = 8.f;
 
     private void Awake()
     {
-        _camera = GetComponentInChildren<Camera>();
+        _camera = GetComponent<Camera>();
+        _details = GetComponent<DetailsCamera>();
+        ui_f = UIManager.Instance.UI_ob;
         txt_name = ui_f.GetComponentInChildren<Text>();
+
     }
+
 
     private void Update()
     {
-        Interaction();
+        if (!GameManager.Instance.IsObserve && !GameManager.Instance.IsNext &&
+            !UIManager.Instance.OpenNote && !UIManager.Instance.StartCriminal && !UIManager.Instance.StartGame)
+        {
+           Interaction();
+        }
+        else
+        {
+            ui_f.SetActive(false);
+        }
     }
+
+    Material[] _mat;
+    Color orign = Color.black;
+    [SerializeField]
+    Color over;
+    GameObject obj;
     // 상호작용 인식
     void Interaction()
     {
-        Collider[] colls = Physics.OverlapSphere(_playerCenter.position, fildDistance, interactionLayer);
+        RaycastHit hit = new RaycastHit();
+        GameObject target = null;
 
-        Collider obj = null;
-        float minDist = 5.0f;
-
-        if (colls.Length == 0)
-            ui_f.SetActive(false);
-
-        // 가장 가까운 오브젝트 찾기
-        foreach (Collider coll in colls)
+        Ray ray = Camera.main.ScreenPointToRay(Input.mousePosition);
+        if (Physics.Raycast(ray.origin, ray.direction, out hit, interactionDist, interactionLayer))
         {
-            float dist = Vector3.Distance(coll.transform.position, _playerCenter.transform.position);
-            if (dist > 1.3f)
-            {
-                Renderer[] render = coll.GetComponentsInChildren<Renderer>();
-                foreach (Renderer ren in render)
-                    ren.material.SetFloat("_Ifem", 0.0f);
-            }
-            else
-            {
-                // 이펙트 
-                Renderer[] render = coll.GetComponentsInChildren<Renderer>();
-                foreach (Renderer ren in render)
-                    ren.material.SetFloat("_Ifem", 1.0f);
+            target = hit.collider.gameObject;
 
-
-                if (minDist > dist)
+            if (obj != target)
+            {
+                objChk = true;
+                if (obj != null)
                 {
-                    obj = coll;
-                    minDist = dist;
+                    foreach (Material mat in _mat)
+                        mat.SetColor("_EmissionColor", orign);
                 }
+
+                objTag = target.tag;
+                obj = target;
+
+                UIManager.Instance.SetObUI(objTag);
+
+                MeshRenderer[] render = target.GetComponentsInChildren<MeshRenderer>();
+                _mat = new Material[render.Length];
+                for (int i = 0; i < render.Length; i++)
+                {
+                    _mat[i] = render[i].material;
+                    _mat[i].SetColor("_EmissionColor", over);
+                }
+                
+                if (_mat == null)
+                    _mat[0] = target.transform.GetChild(0).GetComponent<MeshRenderer>().material;
+
+                foreach (Material mat in _mat)
+                    mat.SetColor("_EmissionColor", over);
+
+                ui_f.SetActive(true);
+                txt_name.text = target.name;
+            }
+            SetFUI(Input.mousePosition);
+
+            if (Input.GetMouseButton(0))
+            {
+              
+                Click();
             }
         }
-
-        if (obj != null)
+        else
         {
-            // UI Setting
-            SetFUI(obj.transform.position);
-            string name = obj.name;
-            txt_name.text = name;
-            ui_f.GetComponent<UI_F>().SetInfo(obj.tag);
-            ui_f.SetActive(true);
+            if (obj != null)
+            {
+                foreach (Material mat in _mat)
+                    mat.SetColor("_EmissionColor",orign);
+                obj = null;
+                ui_f.SetActive(false);
+            }
         }
     }
 
-    void SetFUI(Vector3 objPos)
+    void Click()
     {
-        Vector3 screenPos = _camera.WorldToScreenPoint(objPos);
-        screenPos.z = 0;
+        GameManager.Instance.IsObserve = true;
+        ui_f.SetActive(false);
+        string n = txt_name.text.Replace(" ", "");
 
-        Vector3 viewPos = _camera.ScreenToViewportPoint(screenPos);
-        if (viewPos.x > 0.9f)
-            viewPos.x = 0.9f;
-        if (viewPos.x < 0.1f)
-            viewPos.x = 0.1f;
+        foreach (Material mat in _mat)
+            mat.SetColor("_EmissionColor", orign);
 
-        if (viewPos.y > 0.9f)
-            viewPos.y = 0.9f;
-        if (viewPos.y < 0.1f)
-            viewPos.y = 0.1f;
+        switch (objTag)
+        {
+            case "OBJ":
+                UIManager.Instance.Dialoue.SetActive(true);
+                DialoguePanel.Instance.StartDialogue(DialogueType.OBJ, n);
+                break;
+
+            case "NPC":
+                UIManager.Instance.Select.SetCamera(obj);
+                UIManager.Instance.Select.Init(txt_name.text);
+                break;
+
+            case "EXP": // 확대조사
+                UIManager.Instance.Dialoue.SetActive(true);
+                DialoguePanel.Instance.StartDialogue(DialogueType.EXP, n);
+                break;
+
+            case "DET": // 세부조사
+                UIManager.Instance.Dialoue.SetActive(true);
+                DialoguePanel.Instance.StartDialogue(DialogueType.DET, n);
+                break;
+        }
+    }
+
+    void SetFUI(Vector2 objPos)
+    {
+        Vector2 screenPos = objPos + new Vector2(80,-10); // _camera.WorldToScreenPoint(objPos);
+
+        Vector2 viewPos = _camera.ScreenToViewportPoint(screenPos);
+        if (viewPos.x > 0.8f)
+            viewPos.x = 0.8f;
+        if (viewPos.x < 0.2f)
+            viewPos.x = 0.2f;
+
+        if (viewPos.y > 0.8f)
+            viewPos.y = 0.8f;
+        if (viewPos.y < 0.2f)
+            viewPos.y = 0.2f;
 
         screenPos = _camera.ViewportToScreenPoint(viewPos);
 
